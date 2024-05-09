@@ -7,6 +7,9 @@ Based on: https://rocker-project.org/images/versioned/rstudio.html
 ```
 docker compose up
 ```
+Go to `localhost:8787`
 
-user: `rstudio`
-password: `password`
+Login with credentials:
+- user: `rstudio`
+- password: `password`
+
