@@ -13,3 +13,5 @@ Login with credentials:
 - user: `rstudio`
 - password: `password`
 
+Only file in `workspace` directory will be persisted.
+
