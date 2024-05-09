@@ -7,5 +7,5 @@ services:
       PASSWORD: x
       ROOT: true
     volumes:
-      # - ./.rstudio_config:/home/rstudio/.config/rstudio
+      - ./.rstudio_config:/home/rstudio/.config/rstudio
       - ./workspace:/home/rstudio/workspace
