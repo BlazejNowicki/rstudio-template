@@ -2,5 +2,5 @@
 docker compose up
 ```
 
-user: rsudio
+user: rstudio
 password: x
