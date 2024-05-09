@@ -4,7 +4,7 @@ services:
     ports:
       - "8787:8787"
     environment:
-      PASSWORD: x
+      PASSWORD: password
       ROOT: true
     volumes:
       - ./.rstudio_config:/home/rstudio/.config/rstudio
