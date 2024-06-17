@@ -1,0 +1,152 @@
+---
+title: "Selekcja cech dla modeli liniowych"
+date: "Semestr letni 2021/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(MASS)
+library(ISLR)
+library(leaps)
+library(dplyr)
+```
+
+## Selekcja cech dla modeli liniowych
+
+Ładujemy dane analogicznie jak w poprzednich tematach
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+### Wybór najepszego podzbioru
+
+```{r bestSubsets1}
+countries_processed_bs <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed)
+countries_processed_bs_sum <- summary(countries_processed_bs)
+countries_processed_bs_sum
+```
+
+Obiekt zwracany przez funkcję `summary.regsubsets()` zawiera informacje umożliwiające
+zidentyfikowanie globalnie najlepszego pozdbioru cech, np. miarę $C_p$.
+```{r cp}
+countries_processed_bs_sum$cp
+```
+
+Najlepszy podzbiór według kryterium BIC
+```{r bestBIC}
+bic_min <- which.min(countries_processed_bs_sum$bic)
+bic_min
+countries_processed_bs_sum$bic
+```
+
+Stosowny obrazek
+```{r bestBICPlot}
+plot(countries_processed_bs_sum$bic, xlab = "Liczba zmiennych", ylab = "BIC", col = "green",
+     type = "b", pch = 20)
+points(bic_min, countries_processed_bs_sum$bic[bic_min], col = "red", pch = 9)
+```
+
+Dostępny jest też specjalny rodzaj wykresu (`?plot.regsubsets`).
+```{r regsubsetsPlot}
+plot(countries_processed_bs, scale = "bic")
+```
+
+Liczba kolumn została ograniczone ze względu na złożoność obliczeniową.
+
+Dla wybranego podzbioru sugerowane jest użycie wszystkich kolumn.
+
+### Selekcja krokowa do przodu i wstecz
+
+Funkcja `regsubsets()` z odpowiednio ustawionym parametrem `method` może
+przeprowadzić selekcję krokową.
+```{r stepwise}
+countries_processed_fwd <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed, nvmax = 19, 
+                          method = "forward")
+countries_processed_fwd_sum <- summary(countries_processed_fwd)
+countries_processed_fwd_sum
+countries_processed_back <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed, nvmax = 19, 
+                           method = "backward")
+countries_processed_back_sum <- summary(countries_processed_back)
+countries_processed_back_sum
+```
+```{r}
+bic_min <- which.min(countries_processed_fwd_sum$bic)
+bic_min
+```
+
+Zasugerowany podzbiór kolumn to ten o id 14
+
+### Wybór modelu przy pomocy metody zbioru walidacyjnego
+
+Estymaty błędów testowych będą dokładne tylko jeśli
+wszystkie aspekty dopasowania modelu --- w tym selekcję zmiennych ---
+przeprowadzimy z użyciem wyłącznie **zbioru uczącego**.
+```{r valSet}
+n <- nrow(countries_processed)
+train <- sample(c(TRUE, FALSE), n, replace = TRUE)
+test <- !train
+countries_processed_bs_v <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed[train,], nvmax = 19)
+```
+
+
+```{r predict.regsubsets}
+predict.regsubsets <- function(object, newdata, id, ...) {
+  model_formula <- as.formula(object$call[[2]])
+  mat <- model.matrix(model_formula, newdata)
+  coefs <- coef(object, id = id)
+  mat[, names(coefs)] %*% coefs
+}
+```
+
+Liczymy estymaty błędów
+```{r valSetErrors}
+prediction_error <- function(i, model, subset) {
+  pred <- predict(model, countries_processed[subset,], id = i)
+  mean((countries_processed$Life.expectancy[subset] - pred)^2)
+}
+val_errors <- sapply(1:19, prediction_error, model = countries_processed_bs_v, subset = test)
+val_errors
+```
+
+Optymalny model to model 14 i zawiera 14 zmiennych
+
+
+### Wybór modelu przy pomocy $k$-krotnej walidacji krzyżowej
+
+Musimy dopasować model na każdym z $k$ zbiorów uczących i policzyć błędy
+testowe na odpowiednich zbiorach testowych.
+```{r kcv}
+k <- 10
+folds <- sample(1:k, n, replace = TRUE)
+val_err <- NULL
+for (j in 1:k) {
+  fit_bs <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed[folds != j,], nvmax = 19)
+  err <- sapply(1:19, prediction_error, model = fit_bs, subset = (folds == j))
+  val_err <- rbind(val_err, err)
+}
+```
+
+Estymata błędu CV jest teraz średnią błędów w każdej grupie.
+```{r kcvErrors}
+cv_errors <- colMeans(val_err)
+cv_errors
+```
+
+Według kryterium optymalna ilość zmienych to 16
+

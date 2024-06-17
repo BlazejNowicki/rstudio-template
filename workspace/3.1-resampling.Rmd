@@ -1,0 +1,177 @@
+---
+title: "Walidacja krzyżowa i bootstrap"
+date: "Semestr letni 2021/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(MASS)
+library(ISLR)
+library(dplyr)
+library(boot)
+```
+
+## Walidacja krzyżowa
+
+Używamy zbioru danych Life Expectancy (WHO) dostępnego na Kaggle
+
+https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who
+
+Wczytujemy dataset z pobranego pliku CSV.
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+### Metoda zbioru walidacyjnego
+
+Tworzymy zbiór uczący z połowy dostępnych obserwacji --- reszta będzie stanowić
+zbiór walidacyjny. Dla zapewnienia powtarzalności obliczeń stosujemy funkcję
+`set.seed`.
+```{r validationSet1}
+set.seed(1)
+n <- nrow(countries_processed)
+train <- sample(n, n / 2)
+```
+
+Dopasowujemy model liniowy na zbiorze uczącym, następnie obliczamy MSE dla zbioru
+walidacyjnego.
+```{r validationSet2}
+clm <- lm(Life.expectancy ~ BMI, data = countries_processed, subset = train)
+validation_set <- countries_processed[-train,]
+mse <- mean((validation_set$Life.expectancy - predict(clm, validation_set))^2)
+mse
+```
+
+Powtarzamy to samo dla regresji wielomianowej wyższych stopni
+```{r validationSet3}
+for (i in 2:10) {
+  clm_poly <- lm(Life.expectancy ~ poly(BMI, degree = i), data = countries_processed, 
+                     subset = train)
+  print(mean((validation_set$Life.expectancy - predict(clm_poly, validation_set))^2))
+}
+```
+Ponieważ w zbiorze danych mamy informacje z roku na rok dla tego samego państwa coraz wyższe wielomiany dającoraz lepsze rezultaty tak jakby to był zbiór treningowy.
+
+Bardziej odpowiedni byłby podział na kraje jako zbiór walidacyjny ale wtedy odchodzimy od schematu labolatorium
+
+
+Powtarzamy obliczenia dla innego zbioru walidacyjnego.
+```{r validationSetOther}
+set.seed(2)
+train <- sample(n, n / 2)
+validation_set <- countries_processed[-train,]
+degree_max <- 5
+mse <- rep(0, times = degree_max)
+for (i in 1:degree_max) {
+  clm <- lm(Life.expectancy ~ poly(BMI, degree = i), data = countries_processed, subset = train)
+  mse[i] <- mean((validation_set$Life.expectancy - predict(clm, validation_set))^2)
+}
+mse
+```
+
+
+Otrzymane wyniki można zobrazować na wykresie
+```{r validationSetPlot}
+plot(mse, xlab = "Stopień wielomianu", ylab = "MSE", type = "b", pch = 20, 
+     col = "blue")
+```
+Po trzecim stopniu wielomiany zyski sa niezauważalne
+
+### Walidacja krzyżowa _bez jednego_ (*leave-one-out*)
+
+Walidację krzyżową dla uogólnionych modeli liniowych wykonuje funkcja `cv.glm()`
+z pakietu `boot`. Jej argumentem (`glmfit`) jest obiekt klasy `glm`, więc
+jeśli chcemy jej użyć do walidacji zwykłych modeli liniowych, musimy je dopasowywać
+jako uogólnione modele liniowe (z `family = gaussian`, co zresztą jest wartością
+domyślną). Funkcja `cv.glm()` zwraca listę (zobacz `?cv.glm`), której najbardziej
+interesującą składawą jest `delta` --- wektor o długości 2 zawierający estymatę
+błędu predykcji w wersji oryginalnej i skorygowaną dla uwzględnienia obciążenia
+wprowadzanego przez walidację krzyżową inną niż LOOCV.
+```{r loocv}
+compute_loocv_mse <- function(degree) {
+  countries_processed_glm <- glm(Life.expectancy ~ poly(BMI, degree), data = countries_processed)
+  cv.glm(countries_processed, countries_processed_glm)$delta[1]
+}
+mse <- sapply(1:degree_max, compute_loocv_mse)
+mse
+```
+
+Można też narysować obrazek
+```{r loocvPlot}
+plot(mse, xlab = "Stopień wielomianu", ylab = "LOOCV MSE", type = "b", pch = 20, 
+     col = "blue")
+```
+
+MSE jest średnio wyższy ale jego rozkład zmienia sie w analogiczy sposób w zależności od stopnia wielomianu
+
+### $k$-krotna walidacja krzyżowa
+
+Podobnie korzystamy z funkcji `cv.glm()`, tylko teraz jawnie ustawiamy parametr `K`
+oznaczający liczbę grup (*folds*). Np. dla $k = 10$ wygląda to jak poniżej.
+```{r kcv}
+compute_kcv_mse <- function(degree, k) {
+  countries_processed_glm <- glm(Life.expectancy ~ poly(BMI, degree), data = countries_processed)
+  cv.glm(countries_processed, countries_processed_glm, K = k)$delta[1]
+}
+mse <- sapply(1:degree_max, compute_kcv_mse, k = 10)
+mse
+```
+
+Oczywiście tym razem wyniki są losowe. Możemy zrobić ich zestawienie
+dla np. 10 prób.
+```{r kcv2}
+mse10 <- replicate(10, sapply(1:degree_max, compute_kcv_mse, k = 10))
+mse10
+```
+
+I stosowny obrazek
+```{r kcv2Plot}
+matplot(mse10, pch = 20, type = "l", xlim = c(1, degree_max),
+        xlab = "Stopień wielomianu", ylab = "Walidacyjny MSE")
+```
+W tym przypadku nie ma znaczących różnic pomiędzy splitami
+
+## Bootstrap
+
+Użyjemy metody *bootstrap* do oszacowania błędów standardowych współczynników
+regresji liniowej. Podstawową funkcją jest tutaj `boot()` z pakietu `boot`.
+Wymaga ona jako parametru funkcji obliczającej interesującą statystykę dla podanego 
+zbioru danych. Ta ostatnia funkcja powinna akceptować dwa parametry: zbiór danych
+oraz wektor indeksów (istnieją też inne możliwości: `?boot`).
+```{r bootFunction}
+lm_coefs <- function(data, index = 1:nrow(data)) {
+  coef(lm(Life.expectancy ~ BMI, data = countries_processed, subset = index))
+}
+```
+
+Funkcja `lm_coefs()` oblicza estymaty współczynników regresji dla zbioru danych
+typu bootstrap utworzonego z `countries_processed`:
+```{r bootcountries_processed}
+n <- nrow(countries_processed)
+lm_coefs(countries_processed, sample(n, n, replace = TRUE))
+```
+Oczywiście jednym z takich zbiorów jest sam oryginał
+```{r coefcountries_processed}
+lm_coefs(countries_processed)
+```
+
+Obliczamy błędy standardowe metodą bootstrap z 1000 replikacji
+```{r boot}
+boot(countries_processed, lm_coefs, R = 1000)
+```
