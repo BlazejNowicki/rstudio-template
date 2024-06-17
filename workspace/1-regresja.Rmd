@@ -1,0 +1,213 @@
+---
+title: "Regresja liniowa"
+date: "Semestr letni 2021/22"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+```{r install.packages}
+install.packages("ISLR", dependencies = TRUE)
+```
+
+## Prosta regresja liniowa
+
+Używamy zbioru danych Life Expectancy (WHO) dostępnego na Kaggle
+
+https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who
+
+Wczytujemy dataset z pobranego pliku CSV.
+
+```{r countriesDataSet}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+```
+
+Dataset zawiera brakujące wartości. W tym projekcie skupiamy sie na regresji liniowej dlatego wykorzystamy prostą metodę usupełniania brakujących wartości średnią z danej kolumny.
+
+```{r}
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+```{r}
+names(countries_processed)
+dim(countries_processed)
+?countries_processed
+head(countries_processed)
+```
+
+Wykonujemy dopasownie modelu liniowego
+
+$$
+  Y = \beta_0 + \beta_1 X + \epsilon
+$$
+
+Przewidujemy kolumnę `Life.expectancy` w zależności od BMI
+
+```{r simpleRegression}
+fit_simple <- lm(Life.expectancy ~ BMI)
+```
+
+
+```{r lmClass}
+fit_simple
+class(fit_simple)
+is.list(fit_simple)
+names(fit_simple)
+```
+
+Funkcja została poprawnie dopasowana i uzystakliśmy dodatnią korelację.
+
+```{r lmComponents}
+coef(fit_simple)
+```
+
+```{r lmSummary}
+?summary.lm
+summary(fit_simple)
+```
+
+Uzyskliśmy stosunkow niewielkie odchylenie standardowe i małe wartości `Pr(>|t|)`
+
+```{r lmSummaryList}
+summaryList <- summary(fit_simple)
+summaryList$sigma
+summaryList$r.squared
+summaryList$fstatistic
+```
+
+Wyznaczamy przedziały ufności
+
+```{r confInt}
+confint(fit_simple)
+```
+
+Przykłady użycia funkcji predict
+
+```{r predictConfidence}
+mean(BMI)
+predict(fit_simple, data.frame(BMI = mean(BMI)), interval = "confidence")
+predict(fit_simple, data.frame(BMI = mean(BMI)), interval = "prediction")
+```
+Dla wartości średniej BMI uzyskujemy rozsądne przewidywane ~ 70 lat
+
+## Wykresy prostej regresji liniowej
+
+Prosta regresji na tle danych
+
+```{r lmPlot}
+plot(BMI, Life.expectancy)
+abline(fit_simple)
+```
+
+
+Wykresy diagnostyczne
+```{r lmDiagnosticPlots}
+plot(fit_simple)
+```
+Widzimy że istnieje znacząca wariancja w danych jednak model liniowy dla jednej zmiennej wydaje sie odpowiedni i dobrze oddaje liniową zalezność.
+
+Identyfikacja obserwacji wpływowych (statystyka "dźwigni" [*leverage*])
+```{r hatvalues}
+plot(hatvalues(fit_simple))
+which.max(hatvalues(fit_simple))
+```
+
+## Regresja wielokrotna
+
+Sprawdzamy jak dołożenie kolejnych zmienny wpłynie na wynik
+
+Model 
+$$
+  Y = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \beta_3 X_3 + \epsilon
+$$
+reprezentowany jest przez formułę `Y ~ X1 + X2 + X3`, np.
+```{r multiRegression}
+fit_la <- lm(Life.expectancy ~ BMI + Alcohol)
+summary(fit_la)
+```
+
+Jeśli chcemy wykonać regresję pewnej zmiennej względem wszystkich pozostałych
+stosuje się składnię (parametr `data` jest tu wymagany)
+```{r multiRegressionAll}
+fit_all <- lm(Life.expectancy ~ . - Country - Status, data = countries_processed)
+summary(fit_all)
+```
+
+Zbiór ufności dla dwóch współczynników
+```{r confSet}
+library(ellipse)
+plot(ellipse(fit_la, which = -1), type = "l")
+la_coefs <- coef(fit_la)
+points(la_coefs[2], la_coefs[3])
+```
+
+## Interakcje między zmiennymi
+
+Obecność składnika $X_1 \cdot X_2$ zaznacza się w formule przez człon
+`X1 : X2`. Składnia `X1 * X2` jest skrótem do `X1 + X2 + X1:X2`. Np.
+```{r interaction}
+summary(lm(Life.expectancy ~ BMI * Alcohol))
+```
+
+## Nieliniowe transformacje predyktorów
+
+Model z kwadratową zależnością od `lstat`, czyli
+$$
+  medv = \beta_0 + \beta_1 \cdot lstat + \beta_2 \cdot lstat^2 + \epsilon
+$$
+dopasowywany jest następująco (funkcja `I()` jest konieczna ze względu 
+na specjalne znaczenie operatora `^` w formułach)
+```{r square}
+fit_l2 <- lm(Life.expectancy ~ GDP + I(GDP^2))
+summary(fit_l2)
+```
+
+
+Dopasowanie modeli `fit_simple` i `fit_l2` można porównać porównując $RSE$ i $R^2$.
+Funkcja `anova()` wykonuje test statystyczny, w którym hipotezą zerową jest
+jednakowe dopasowanie.
+```{r anova}
+anova(fit_simple, fit_l2)
+```
+
+Regresja wielomianowa wyższego stopnia może wykorzystywać funkcję `poly()`
+```{r poly}
+fit_l5 <- lm(Life.expectancy ~ poly(BMI, 5))
+summary(fit_l5)
+```
+
+Logarytmiczna transformacja predyktora
+```{r log}
+summary(lm(Life.expectancy ~ log(BMI)))
+```
+
+## Predyktory jakościowe
+
+Zbiór zawiera dane jakościowe o statusie kraju "Developing"/"Developed" oraz nazwe kraju
+
+Dla czynników generowane są automatycznie zmienne zastępcze, np.
+```{r}
+sales_all_ia_fit <- lm(Life.expectancy ~ . - Country, data = countries_processed)
+summary(sales_all_ia_fit)
+```
+
+Funkcja `contrasts()` pokazuje kodowanie używane przez `R` dla zmiennych
+zastępczych.
+```{r dummy}
+sales_all_ia_fit$contrasts
+```
