@@ -1,0 +1,289 @@
+---
+title: "Modele nieliniowe"
+date: "Semestr letni 2021/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(ISLR)
+library(splines)
+library(gam)
+library(dplyr)
+```
+
+## Modele nieliniowe
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+### Regresja wielomianowa
+
+Regresja wielomianowa stopnia 4 `Life.expectancy` względem `BMI`.
+```{r poly4}
+fit_poly <- lm(Life.expectancy ~ poly(BMI, 4), data = countries_processed)
+summary(fit_poly)
+```
+To samo z użyciem standardowej bazy wielomianów $X, X^2, X^3, X^4$.
+```{r poly4raw}
+fit_poly_raw <- lm(Life.expectancy ~ poly(BMI, 4, raw = TRUE), data = countries_processed)
+summary(fit_poly_raw)
+```
+To samo, co powyżej, inaczej zapisane
+```{r poly4.raw2}
+fit_poly_raw <- lm(Life.expectancy ~ BMI + I(BMI^2) + I(BMI^3) + I(BMI^4), data = countries_processed)
+summary(fit_poly_raw)
+```
+
+Obrazek dopasowania zawierający krzywe błędu standardowego.
+```{r poly4plot}
+BMI_lims <- range(countries_processed$BMI)
+BMI_grid <- seq(BMI_lims[1], BMI_lims[2])
+pred_poly <- predict(fit_poly, list(BMI = BMI_grid), se.fit = TRUE)
+se_bands <- cbind(pred_poly$fit + 2 * pred_poly$se.fit, 
+                  pred_poly$fit - 2 * pred_poly$se.fit)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, col = "darkgrey", cex = 0.5, xlim = BMI_lims)
+lines(BMI_grid, pred_poly$fit, col = "red", lwd = 2)
+matlines(BMI_grid, se_bands, col = "red", lty = "dashed")
+```
+
+### Regresja logistyczna wielomianowa
+
+```{r}
+hist(countries_processed$Life.expectancy)
+```
+
+Chcemy skonstruować klasyfikator z dwoma klasami: długo żyjących (więcej
+niż 70 lat: warunek `Life.expectancy > 70`) i krótko żyjących (pozostali).
+Predyktorem jest `BMI`, ale chcemy też uwzględnić wpływ wyższych potęg (do 4)
+tej zmiennej.
+
+Wartośc 70 została wybrana na podstawie histogramu tak aby wielkość klas była abliżona
+
+```{r logisticPoly}
+fit_log_poly <- glm(I(Life.expectancy > 70) ~ poly(BMI, 4), data = countries_processed, family = binomial)
+```
+
+Funkcja `predict.glm()` standardowo zwraca szanse logarytmiczne, musimy jednak
+otrzymane wartości przekształcić funkcją logistyczną.
+
+```{r logisticPolyPred}
+pred_log_poly <- predict(fit_log_poly, list(BMI = BMI_grid), se.fit = TRUE)
+pred_probs <- plogis(pred_log_poly$fit)
+se_bands_logit <- cbind(pred_log_poly$fit + 2 * pred_log_poly$se.fit,
+                        pred_log_poly$fit - 2 * pred_log_poly$se.fit)
+se_bands <- plogis(se_bands_logit)
+plot(countries_processed$BMI, I(countries_processed$Life.expectancy > 70), xlim = BMI_lims, ylim = c(0, 1), 
+     col = "darkgrey", cex = 0.5, ylab = "P(Life.expectancy > 70 | BMI)")
+lines(BMI_grid, pred_probs, col = "red", lwd = 2)
+matlines(BMI_grid, se_bands, lty = "dashed", col = "red")
+```
+
+### Funkcje sklejane
+
+Bazę regresyjnych funkcji sklejanych wylicza funkcja `bs()` z pakietu `splines`.
+Domyślnym stopniem funkcji sklejanych jest 3.
+
+Regresja z użyciem funkcji sklejanych z ustalonymi węzłami.
+```{r bsFixedKnots}
+fit_bs_knots <- lm(Life.expectancy ~ bs(BMI, knots = c(25, 40, 60)), data = countries_processed)
+pred_bs_knots <- predict(fit_bs_knots, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_knots$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_knots$fit + 2 * pred_bs_knots$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_knots$fit - 2 * pred_bs_knots$se.fit, col = "red",
+      lty = "dashed")
+abline(v = c(25, 40, 60), lty = "dotted")
+```
+
+
+Dopasowanie modelu wykorzystującego funkcje sklejane o ustalonej liczbie
+stopni swobody. Węzły są rozmieszczane automatycznie.
+```{r bsFixedDF}
+fit_bs_df <- lm(Life.expectancy ~ bs(BMI, df = 6), data = countries_processed)
+pred_bs_df <- predict(fit_bs_df, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_df$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_df$fit + 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_df$fit - 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+bs_knots <- attr(bs(countries_processed$BMI, df = 6), "knots")
+abline(v = bs_knots, lty = "dotted")
+```
+
+[**Funkcja `bs()` akceptuje parametr `degree`, który ustala stopień funkcji
+sklejanej. Sprawdź jak w powyższych przykładach wyglądają funkcje sklejane
+innych stopni.**]
+
+```{r}
+fit_bs_df <- lm(Life.expectancy ~ bs(BMI, df = 10), data = countries_processed)
+pred_bs_df <- predict(fit_bs_df, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_df$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_df$fit + 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_df$fit - 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+bs_knots <- attr(bs(countries_processed$BMI, df = 10), "knots")
+abline(v = bs_knots, lty = "dotted")
+```
+
+```{r}
+fit_bs_df <- lm(Life.expectancy ~ bs(BMI, df = 3), data = countries_processed)
+pred_bs_df <- predict(fit_bs_df, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_df$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_df$fit + 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_df$fit - 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+bs_knots <- attr(bs(countries_processed$BMI, df = 3), "knots")
+abline(v = bs_knots, lty = "dotted")
+```
+
+### Naturalne funkcje sklejane
+
+Bazę naturalnych *sześciennych* funkcji sklejanych wyznacza funkcja `ns()`
+z pakietu `splines`.
+```{r ns}
+fit_ns <- lm(Life.expectancy ~ ns(BMI, df = 4), data = countries_processed)
+pred_ns <- predict(fit_ns, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_ns$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_ns$fit + 2 * pred_ns$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_ns$fit - 2 * pred_ns$se.fit, col = "red",
+      lty = "dashed")
+abline(v = attr(ns(countries_processed$BMI, df = 4), "knots"), lty = "dotted")
+```
+
+
+### Wygładzające funkcje sklejane
+
+Dopasowanie wygładzającej (sześciennej) funkcji sklejanej do danych wykonuje funkcja
+`smooth.spline()`. Możemy dopasować wygładzającą funkcję sklejaną o ustalonej
+liczbie stopni swobody (tu 16).
+```{r smooth}
+fit_smooth_df <- smooth.spline(countries_processed$BMI, countries_processed$Life.expectancy, df = 16)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(fit_smooth_df, col = "red", lwd = 2)
+```
+
+Można też liczbę stopni swobody wyznaczyć automatycznie korzystając z walidacji
+krzyżowej.
+```{r smoothcv, warning=FALSE}
+fit_smooth_cv <- smooth.spline(countries_processed$BMI, countries_processed$Life.expectancy, cv = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(fit_smooth_cv, col = "red", lwd = 2)
+```
+
+### Regresja lokalna
+
+Regresję lokalną (domyślnie wielomianami stopnia 2) wykonuje funkcja `loess()`.
+Parametr funkcji o nazwie `span` odpowiada parametrowi metody $s$.
+```{r localReg}
+spans <- c(0.2, 0.5)
+clrs <- c("red", "blue")
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+for (i in 1:length(spans)) {
+   fit_loess <- loess(Life.expectancy ~ BMI, span = spans[i], data = countries_processed)
+   pred_loess <- predict(fit_loess, data.frame(BMI = BMI_grid))
+   lines(BMI_grid, pred_loess, col = clrs[i], lwd = 2)
+}
+legend("topright", legend = paste("s =", spans), col = clrs, lty = 1, lwd = 2)
+```
+
+To samo dla wielomianów stopnia 1.
+```{r localReg1}
+spans <- c(0.2, 0.5)
+clrs <- c("red", "blue")
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+for (i in 1:length(spans)) {
+   fit_loess <- loess(Life.expectancy ~ BMI, span = spans[i], degree = 1, data = countries_processed)
+   pred_loess <- predict(fit_loess, data.frame(BMI = BMI_grid))
+   lines(BMI_grid, pred_loess, col = clrs[i], lwd = 2)
+}
+legend("topright", legend = paste("s =", spans), col = clrs, lty = 1, lwd = 2)
+```
+
+### Uogólnione modele addytywne (GAMs)
+
+GAM będący rozwinięciem modelu liniowego może być uczony metodą najmniejszych
+kwadratów przy pomocy funkcji `lm()`.
+
+```{r gamls}
+fit_gam_ls <- lm(Life.expectancy ~ ns(GDP, df = 4) + ns(BMI, df = 5) + Population,
+                 data = countries_processed)
+fit_gam_ls
+summary(fit_gam_ls)
+```
+
+Ogólniejsze GAM są uczone przy pomocy algorytmu dopasowania wstecznego
+w funkcji `gam()` z pakietu `gam`.
+Pakiet `gam` zawiera też funkcje implementujące modele nieparametryczne: `s()` 
+reprezentującą wygładzające funkcje sklejane i `lo()` reprezentującą lokalną 
+regresję.
+
+Dopasowanie modelu podobnego do poprzedniego, ale z użyciem wygładzających
+funkcji sklejanych.
+```{r gambf}
+fit_gam_bf <- gam(Life.expectancy ~ s(GDP, df = 4) + s(BMI, df = 5) + Population, data = countries_processed)
+summary(fit_gam_bf)
+```
+
+Wykres dla modelu dopasowanego funkcją `gam()`.
+```{r gambfplot}
+par(mfrow = c(1, 3))
+plot(fit_gam_bf, col = "red", se = TRUE)
+```
+
+Funkcja `plot.Gam()` działa też dla modeli metody najmniejszych kwadratów, ale
+wówczas trzeba się do niej odwołać jawnie.
+```{r gamlsplot}
+par(mfrow = c(1, 3))
+plot.Gam(fit_gam_ls, col = "red", se = TRUE)
+```
+
+Istnieje wersja funkcji `anova()` porównująca GAMs.
+```{r anovagam}
+fit_gam_1 <- gam(Life.expectancy ~ s(BMI, df = 5) + Population, data = countries_processed)
+fit_gam_2 <- gam(Life.expectancy ~ GDP + s(BMI, df = 5) + Population, data = countries_processed)
+anova(fit_gam_1, fit_gam_2, fit_gam_bf, test = "F")
+```
+
+Dopasowanie modelu wykorzystującego lokalną regresję.
+```{r gamlo}
+fit_gam_lo <- gam(Life.expectancy ~ s(GDP, df = 4) + lo(BMI, span = 0.7) + Population, 
+                  data = countries_processed)
+summary(fit_gam_lo)
+par(mfrow = c(1, 3))
+plot(fit_gam_lo, col = "green", se = TRUE)
+```
+
+### GAM w GLM
+
+Regresja logistyczna wykorzystująca GAM
+```{r logisticgam}
+fit_logistic_gam <- gam(I(Life.expectancy > 250) ~ GDP + s(BMI, df = 5) + Population, 
+                        family = binomial, data = countries_processed)
+summary(fit_logistic_gam)
+par(mfrow = c(1, 3))
+plot(fit_logistic_gam, col = "blue", se = TRUE)
+```

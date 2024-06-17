@@ -1,0 +1,320 @@
+---
+title: "Drzewa decyzyjne i modele pochodne"
+date: "Semestr letni 2021/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(ISLR)
+library(MASS)
+library(tree)
+library(randomForest)
+library(gbm)
+library(dplyr)
+```
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Life.expectancy < 70, 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- na.omit(cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE]))
+head(countries_processed)
+attach(countries_processed)
+```
+
+## Drzewa decyzyjne
+
+Drzewa decyzyjne są zaimplementowane w pakiecie `tree` (nieco odmienna
+implementacja dostępna jest w pakiecie `rpart`).
+
+### Drzewa klasyfikacyjne
+
+Będziemy przewidywać
+
+Budujemy drzewo klasyfikacyjne do predykcji `target` na podstawie pozostałych
+zmiennych (poza `countries`).
+
+```{r classTree}
+countries_high_tree <- tree(target ~ . - Country - Status - Life.expectancy, data = countries_processed)
+summary(countries_high_tree)
+```
+
+Dla drzew klasyfikacyjnych
+$$
+  \text{deviance} = -2 n \sum_{m=1}^{|T|} \sum_{k=1}^K \hat{p}_{mk} \log \hat{p}_{mk}
+$$
+oraz
+$$
+  \text{residual mean deviance} = \frac{\text{deviance}}{n - |T|}.
+$$
+
+Przedstawienie graficzne dopasowanego modelu
+```{r plottree}
+plot(countries_high_tree)
+text(countries_high_tree, pretty = 0)
+```
+
+Więcej informacji podaje funkcja `print.tree()`
+```{r print_tree}
+countries_high_tree
+```
+
+Widzimy że najbardziej istotne są `Income.composition.of.resources` i `Adult.mortality`
+
+Metodą zbioru walidacyjnego estymujemy błąd testowy dla drzewa klasyfikacyjnego
+w rozważanym problemie.
+```{r classtreeerror}
+set.seed(1)
+n <- nrow(countries_processed)
+train <- sample(n, n / 2)
+test <- -train
+countries_high_tree <- tree(as.factor(target) ~ . - Country - Status - Life.expectancy, data = countries_processed, subset = train)
+tree_class <- predict(countries_high_tree, newdata = countries_processed[test,], type = "class")
+table(tree_class, countries_processed$target[test])
+mean(na.omit(tree_class != countries_processed$target[test]))
+```
+
+*Duże* drzewo $T_0$ dla zbioru uczącego `countries_processed[train,]`
+```{r bigclasstree}
+plot(countries_high_tree)
+text(countries_high_tree, pretty = 0)
+```
+
+Do znalezienia optymalnego poddrzewa stosujemy przycinanie stosowane złożonością.
+Przy pomocy CV konstruujemy ciąg poddrzew wyznaczony przez malejącą złożoność.
+
+```{r classtreecv}
+set.seed(1)
+countries_high_cv <- cv.tree(countries_high_tree, FUN = prune.misclass)
+countries_high_cv
+plot(countries_high_cv$size, countries_high_cv$dev, type = "b")
+```
+
+Składowa `countries_high_cv$dev` zawiera liczbę błędów CV. Przycinamy drzewo $T_0$
+do poddrzewa z najmniejszym poziomem błędów CV.
+
+```{r class.tree.prune}
+size_opt <- countries_high_cv$size[which.min(countries_high_cv$dev)]
+countries_high_pruned <- prune.misclass(countries_high_tree, best = size_opt)
+plot(countries_high_pruned)
+text(countries_high_pruned, pretty = 0)
+```
+
+Testowy poziom błędów dla optymalnego poddrzewa.
+```{r class.pruned.error}
+pruned_class <- predict(countries_high_pruned, newdata = countries_processed[test,], 
+                        type = "class")
+table(pruned_class, countries_processed$target[test])
+mean(na.omit(pruned_class != countries_processed$target[test]))
+```
+
+```{r}
+tree_sizes <- countries_high_cv$size
+test_mse_values <- numeric(length(tree_sizes))
+
+# Calculate test MSE for each tree size
+for (i in seq_along(tree_sizes)) {
+  pruned_tree <- prune.misclass(countries_high_tree, best = tree_sizes[i])
+  testPred <- predict(pruned_tree, countries_processed[test,], type = "class")
+  test_mse_values[i] <- mean(testPred != countries_processed$target[test])
+}
+
+plot(tree_sizes, test_mse_values, type = "b", col = "blue", pch = 19,
+     xlab = "Tree Size (number of terminal nodes)", ylab = "Test MSE",
+     main = "Test MSE vs Tree Size")
+```
+
+### Drzewa regresyjne
+
+Używamy zbioru danych `countries_processed` z pakietu `MASS`. Konstruujemy drzewo decyzyjne
+dla problemu regresji `Life.expectancy` względem pozostałych zmiennych.
+
+```{r regressiontree}
+countries_tree <- tree(Life.expectancy ~ . - Country, data = countries_processed)
+summary(countries_tree)
+```
+
+*Deviance* oznacza tutaj RSS. Przedstawienie drzewa
+```{r countriestreeshow}
+countries_tree
+plot(countries_tree)
+text(countries_tree)
+```
+Najistotniejsze są target czyli status (developing/developed), potem Income.composition.of.resources i HIV.AIDS
+
+Metodą zbioru walidacyjnego szacujemy błąd testowy.
+
+```{r countriestreeerror}
+set.seed(1)
+n <- nrow(countries_processed)
+train <- sample(n, n / 2)
+test <- -train
+countries_tree <- tree(Life.expectancy ~ . - Country, data = countries_processed, subset = train)
+countries_pred <- predict(countries_tree, newdata = countries_processed[test,])
+mean((countries_pred - countries_processed$Life.expectancy[test])^2)
+```
+
+Wyznaczamy optymalne poddrzewo metodą przycinania sterowanego złożonością.
+
+```{r Life.expectancy.tree.cv}
+countries_cv <- cv.tree(countries_tree)
+plot(countries_cv$size, countries_cv$dev, type = "b")
+```
+
+W tym przypadku im większy model tym precyzyjniej oddaje zależności.
+Jednak dokładność nie spada znacząco powyżej głębokości równej 4
+
+
+```{r Life.expectancy.prune}
+countries_pruned <- prune.tree(countries_tree, best = 4)
+plot(countries_pruned)
+text(countries_pruned)
+```
+
+
+## Bagging i lasy losowe
+
+### Bagging
+
+Bagging dla regresji `Life.expectancy` względem wszystkich pozostałych w zbiorze `countries_processed`.
+
+```{r countriesbag}
+countries_bag <- randomForest(Life.expectancy ~ . - Country, data = countries_processed, mtry = 13, importance = TRUE)
+countries_bag
+```
+
+Wykres błędu OOB względem liczby drzew
+```{r countriesbagoob}
+plot(countries_bag, type = "l")
+```
+
+
+Wyznaczenie ważności predyktorów
+```{r countriesimportance}
+importance(countries_bag)
+```
+I stosowny obrazek
+```{r countriesimpplot}
+varImpPlot(countries_bag)
+```
+
+Oszacowanie błędu testowego dla poprzednio wyznaczonego zbioru walidacyjnego.
+```{r countriesbagvalid}
+set.seed(2)
+countries_bag <- randomForest(Life.expectancy ~ ., data = countries_processed, subset = train, mtry = 13,
+                         importance = TRUE)
+countries_pred_bag <- predict(countries_bag, newdata = countries_processed[test,])
+mean((countries_pred_bag - countries_processed$Life.expectancy[test])^2)
+```
+
+`target` pozostał jako najbardziej znacząca zmienna ucząca. Zmienna `Year` pojawiła sie na drugim miejscu
+
+Powyższe dla mniejszej liczby hodowanych drzew
+```{r countriesbagvalidsmall}
+set.seed(2)
+countries_bag_s <- randomForest(Life.expectancy ~ ., data = countries_processed, subset = train, mtry = 13,
+                         importance = TRUE, ntree = 25)
+countries_pred_bag_s <- predict(countries_bag_s, newdata = countries_processed[test,])
+mean((countries_pred_bag_s - countries_processed$Life.expectancy[test])^2)
+```
+
+### Lasy losowe
+
+Domyślna wartość parametru `mtry` to $\sqrt{p}$ dla regresji i $p/3$ dla 
+klasyfikacji.
+
+Oszacowanie błędu testowego dla poprzednio wyznaczonego zbioru walidacyjnego.
+```{r countriesrfvalid}
+set.seed(2)
+countries_rf <- randomForest(Life.expectancy ~ . - Country, data = countries_processed, subset = train,
+                         importance = TRUE)
+countries_pred_rf <- predict(countries_rf, newdata = countries_processed[test,])
+mean((countries_pred_rf - countries_processed$Life.expectancy[test])^2)
+```
+
+```{r}
+importance(countries_rf)
+```
+Istotność zmiennych pozostała podobna
+
+Powyższe dla ręcznie ustawionego parametru $m$ (czyli `mtry`).
+```{r Life.expectancy.rf.valid.mtry}
+set.seed(2)
+countries_rf <- randomForest(Life.expectancy ~ ., data = countries_processed, subset = train, mtry = 6,
+                         importance = TRUE)
+countries_pred_rf <- predict(countries_rf, newdata = countries_processed[test,])
+mean((countries_pred_rf - countries_processed$Life.expectancy[test])^2)
+```
+
+## Boosting
+
+Używamy algorytmów boostingu dla drzew decyzyjnych zaimplementowanych w 
+pakiecie `gbm`. Inną implementację --- wydajną i często pojawiającą się
+w zastosowaniach --- zawiera pakiet `xgboost`.
+
+Boosting dla regresji `Life.expectancy` względem pozostałych zmiennych ze zbioru `countries_processed`.
+Funkcją dopasowującą model jest `gbm()` z istotnymi parametrami:
+
+- `distribution`: `"gaussian"` dla regresji z RSS, `"bernoulli"` dla regresji typu
+logistycznego;
+
+- `n.trees`: liczba hodowanych drzew ($B$);
+
+- `interaction.depth`: głębokość interakcji ($d$);
+
+- `shrinkage`: parametr spowalniający uczenie ($\lambda$).
+
+```{r boost}
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed, distribution = "gaussian",
+                  n.trees = 5000, interaction.depth = 4)
+countries_boost
+```
+
+Funkcja `summary.gbm()` wyznacza ważność predyktorów i (domyślnie) wykonuje
+odpowiedni wykres.
+```{r boostimp}
+summary(countries_boost)
+```
+
+[**Które predyktory teraz są najistotniejsze?**]
+
+Podobnie jak w przypadku zwykłych drzew decyzyjnych najistotniejsze były kolumny `target` czyli status oraz `HIV.AIDS`
+
+
+Oszacowanie błędu testowego dla poprzednio wyznaczonego zbioru walidacyjnego.
+```{r countriesboostvalid}
+set.seed(2)
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed[train,], distribution = "gaussian",
+                  interaction.depth = 4, n.trees = 5000)
+countries_pred_boost <- predict(countries_boost, newdata = countries_processed[test,], n.trees = 5000)
+mean((countries_pred_boost - countries_processed$Life.expectancy[test])^2)
+```
+
+To samo dla $\lambda = 0.01$.
+```{r countriesboostvalid2}
+set.seed(2)
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed[train,], distribution = "gaussian",
+                  interaction.depth = 4, n.trees = 5000, shrinkage = 0.01)
+countries_pred_boost <- predict(countries_boost, newdata = countries_processed[test,], n.trees = 5000)
+mean((countries_pred_boost - countries_processed$Life.expectancy[test])^2)
+```
+
+To samo dla $d = 1$.
+```{r countriesboostvalid3}
+set.seed(2)
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed[train,], distribution = "gaussian",
+                  n.trees = 5000, shrinkage = 0.01)
+countries_pred_boost <- predict(countries_boost, newdata = countries_processed[test,], n.trees = 5000)
+mean((countries_pred_boost - countries_processed$Life.expectancy[test])^2)
+```
+

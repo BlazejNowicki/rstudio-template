@@ -1,0 +1,163 @@
+---
+title: "Regularyzacja w modelach liniowych"
+date: "Semestr letni 2021/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(ISLR)
+library(glmnet)
+library(dplyr)
+```
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+## Regularyzacja
+
+```{r modelmatrix}
+X <- model.matrix(Life.expectancy ~ . - Country - Status - target, data = countries_processed)[, -1]
+y <- countries_processed$Life.expectancy
+```
+
+
+### Regresja grzbietowa
+
+Wykonujemy regresję grzbietową dla jawnie określonych wartości $\lambda$. 
+
+```{r ridge}
+lambda_grid <- 10^seq(10, -2, length.out = 100)
+fit_ridge <- glmnet(X, y, alpha = 0, lambda = lambda_grid)
+```
+
+Dla każdej wartości $\lambda$ otrzymujemy zestaw estymat predyktorów
+dostępnych w postaci macierzy
+```{r ridgecoefs}
+dim(coef(fit_ridge))
+```
+
+Można sprawdzić, że większe wartości $\lambda$ dają mniejszą normę euklidesową
+współczynników (pomijamy wyraz wolny).
+```{r ridgeCoefNormSmall}
+fit_ridge$lambda[50]
+coef_ridge <- coef(fit_ridge)[, 50]
+coef_ridge
+sqrt(sum(coef_ridge[-1]^2))
+```
+Natomiast mniejsze wartości $\lambda$ dają większą normę euklidesową współczynników
+```{r ridgeCoefNormBig}
+fit_ridge$lambda[70]
+coef(fit_ridge)[, 70]
+sqrt(sum(coef(fit_ridge)[-1, 70]^2))
+```
+
+Przy pomocy funkcji `predict.glmnet()` można uzyskać np. wartości estymat
+współczynników dla nowej wartości $\lambda$ (np. 50)
+```{r predictGlmnet}
+predict(fit_ridge, s = 50, type = "coefficients")
+```
+
+Estymujemy testowy MSE
+```{r ridgemse}
+set.seed(1)
+n <- nrow(X)
+train <- sample(n, n / 2)
+test <- -train
+fit_ridge <- glmnet(X[train,], y[train], alpha = 0, lambda = lambda_grid,
+                    thresh = 1e-12)
+```
+
+Dla $\lambda = 4$
+```{r ridgemse4}
+pred_ridge <- predict(fit_ridge, s = 4, newx = X[test,])
+mean((pred_ridge - y[test])^2)
+```
+
+Testowy MSE dla modelu zerowego (sam wyraz wolny)
+```{r ridgenullmse}
+pred_null <- mean(y[train])
+mean((pred_null - y[test])^2)
+```
+
+Testowy MSE dla bardzo dużej wartości $\lambda = 10^{10}$
+```{r ridgemse1e10}
+pred_ridge_big <- predict(fit_ridge, s = 1e10, newx = X[test,])
+mean((pred_ridge_big - y[test])^2)
+```
+
+Dla lambda = 4 dostajemy dobre wyniki znacznie lepsze niż bez regularyzacji.
+Dla samego wyrazu wolnego i lambda = 10 dostajemy bardzo słabe wyniki
+
+Testowy MSE dla $\lambda = 0$ (metoda najmniejszych kwadratów)
+```{r ridgemse0}
+pred_ridge_0 <- predict(fit_ridge, x = X[train,], y = y[train], s = 0, 
+                      newx = X[test,], exact = TRUE)
+mean((pred_ridge_0 - y[test])^2)
+```
+
+Porównanie estymat współczynników
+```{r ridgelm}
+lm(y ~ X, subset = train)
+predict(fit_ridge, x = X[train,], y = y[train], s = 0, exact = TRUE, 
+        type = "coefficients")[1:20,]
+```
+
+Wyliczenie optymalnej wartości $\lambda$ przy pomocy walidacji krzyżowej
+```{r ridgecv}
+set.seed(1)
+cv_out <- cv.glmnet(X[train,], y[train], alpha = 0)
+plot(cv_out)
+cv_out$lambda.min
+```
+
+MSE dla optymalnego $\lambda$
+```{r ridgemsemin}
+pred_ridge_opt <- predict(fit_ridge, s = cv_out$lambda.min, newx = X[test,])
+mean((pred_ridge_opt - y[test])^2)
+```
+
+Estymaty współczynników dla optymalnego $\lambda$
+```{r ridgecoefsmin}
+fit_ridge_full <- glmnet(X, y, alpha = 0)
+predict(fit_ridge_full, s = cv_out$lambda.min, type = "coefficients")
+```
+
+### Lasso
+
+Dopasowujemy lasso dla ustalonej siatki parametrów regularyzacji
+```{r lasso}
+fit_lasso <- glmnet(X[train,], y[train], alpha = 1)
+plot(fit_lasso, xvar = "lambda")
+```
+
+Wykonujemy walidację krzyżową i liczymy estymatę MSE
+```{r lasso.cv.mse}
+cv_out <- cv.glmnet(X[train,], y[train], alpha = 1)
+plot(cv_out)
+cv_out$lambda.min
+pred_lasso <- predict(fit_lasso, s = cv_out$lambda.min, newx = X[test,])
+mean((pred_lasso - y[test])^2)
+```
+
+Wszystkie metedy pomimo swoich matematycznych różnic dają podobne rezulataty na poziomie MSE ~= 17. Moze to wynikać z faktu że w danych występuje dużo szumu którego nie da sie w prosty sposob wyeliminować
+
+Estymaty współczynników dla optymalnego $\lambda$
+```{r lasso.coefs.min}
+fit_lasso_full <- glmnet(X, y, alpha = 1)
+predict(fit_lasso_full, s = cv_out$lambda.min, type = "coefficients")[1:20,]
+```
