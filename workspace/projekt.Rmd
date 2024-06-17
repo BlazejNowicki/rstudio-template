@@ -1,0 +1,1527 @@
+---
+title: "Statystyka wielowymiarowa"
+output:
+  html_document: 
+    toc: true
+    fig_caption: true
+    keep_md: true
+  word_document: default
+  pdf_document: default
+---
+
+Błażej Nowicki
+
+
+# 1. Regresja liniowa
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+```{r}
+install.packages("ISLR", dependencies = TRUE)
+```
+
+
+Używamy zbioru danych Life Expectancy (WHO) dostępnego na Kaggle
+
+<https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who>
+
+Wczytujemy dataset z pobranego pliku CSV.
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+```
+
+Dataset zawiera brakujące wartości. W tym projekcie skupiamy sie na regresji liniowej dlatego wykorzystamy prostą metodę usupełniania brakujących wartości średnią z danej kolumny.
+
+```{r}
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+```{r}
+names(countries_processed)
+dim(countries_processed)
+?countries_processed
+head(countries_processed)
+```
+
+Wykonujemy dopasownie modelu liniowego
+
+$$
+  Y = \beta_0 + \beta_1 X + \epsilon
+$$
+
+Przewidujemy kolumnę `Life.expectancy` w zależności od BMI
+
+```{r}
+fit_simple <- lm(Life.expectancy ~ BMI)
+```
+
+```{r}
+fit_simple
+class(fit_simple)
+is.list(fit_simple)
+names(fit_simple)
+```
+
+Funkcja została poprawnie dopasowana i uzystakliśmy dodatnią korelację.
+
+```{r}
+coef(fit_simple)
+```
+
+```{r}
+?summary.lm
+summary(fit_simple)
+```
+
+Uzyskliśmy stosunkow niewielkie odchylenie standardowe i małe wartości `Pr(>|t|)`
+
+```{r}
+summaryList <- summary(fit_simple)
+summaryList$sigma
+summaryList$r.squared
+summaryList$fstatistic
+```
+
+Wyznaczamy przedziały ufności
+
+```{r}
+confint(fit_simple)
+```
+
+Przykłady użycia funkcji predict
+
+```{r}
+mean(BMI)
+predict(fit_simple, data.frame(BMI = mean(BMI)), interval = "confidence")
+predict(fit_simple, data.frame(BMI = mean(BMI)), interval = "prediction")
+```
+
+Dla wartości średniej BMI uzyskujemy rozsądne przewidywane \~ 70 lat
+
+## Wykresy prostej regresji liniowej
+
+Prosta regresji na tle danych
+
+```{r}
+plot(BMI, Life.expectancy)
+abline(fit_simple)
+```
+
+Wykresy diagnostyczne
+
+```{r}
+plot(fit_simple)
+```
+
+Widzimy że istnieje znacząca wariancja w danych jednak model liniowy dla jednej zmiennej wydaje sie odpowiedni i dobrze oddaje liniową zalezność.
+
+Identyfikacja obserwacji wpływowych (statystyka "dźwigni" [*leverage*])
+
+```{r}
+plot(hatvalues(fit_simple))
+which.max(hatvalues(fit_simple))
+```
+
+## Regresja wielokrotna
+
+Sprawdzamy jak dołożenie kolejnych zmienny wpłynie na wynik
+
+Model $$
+  Y = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \beta_3 X_3 + \epsilon
+$$ reprezentowany jest przez formułę `Y ~ X1 + X2 + X3`, np.
+
+```{r}
+fit_la <- lm(Life.expectancy ~ BMI + Alcohol)
+summary(fit_la)
+```
+
+Jeśli chcemy wykonać regresję pewnej zmiennej względem wszystkich pozostałych stosuje się składnię (parametr `data` jest tu wymagany)
+
+```{r}
+fit_all <- lm(Life.expectancy ~ . - Country - Status, data = countries_processed)
+summary(fit_all)
+```
+
+Zbiór ufności dla dwóch współczynników
+
+```{r}
+library(ellipse)
+plot(ellipse(fit_la, which = -1), type = "l")
+la_coefs <- coef(fit_la)
+points(la_coefs[2], la_coefs[3])
+```
+
+## Interakcje między zmiennymi
+
+Obecność składnika $X_1 \cdot X_2$ zaznacza się w formule przez człon `X1 : X2`. Składnia `X1 * X2` jest skrótem do `X1 + X2 + X1:X2`. Np.
+
+```{r}
+summary(lm(Life.expectancy ~ BMI * Alcohol))
+```
+
+## Nieliniowe transformacje predyktorów
+
+Model z kwadratową zależnością od `lstat`, czyli $$
+  medv = \beta_0 + \beta_1 \cdot lstat + \beta_2 \cdot lstat^2 + \epsilon
+$$ dopasowywany jest następująco (funkcja `I()` jest konieczna ze względu na specjalne znaczenie operatora `^` w formułach)
+
+```{r}
+fit_l2 <- lm(Life.expectancy ~ GDP + I(GDP^2))
+summary(fit_l2)
+```
+
+Dopasowanie modeli `fit_simple` i `fit_l2` można porównać porównując $RSE$ i $R^2$. Funkcja `anova()` wykonuje test statystyczny, w którym hipotezą zerową jest jednakowe dopasowanie.
+
+```{r}
+anova(fit_simple, fit_l2)
+```
+
+Regresja wielomianowa wyższego stopnia może wykorzystywać funkcję `poly()`
+
+```{r}
+fit_l5 <- lm(Life.expectancy ~ poly(BMI, 5))
+summary(fit_l5)
+```
+
+Logarytmiczna transformacja predyktora
+
+```{r}
+summary(lm(Life.expectancy ~ log(BMI)))
+```
+
+## Predyktory jakościowe
+
+Zbiór zawiera dane jakościowe o statusie kraju "Developing"/"Developed" oraz nazwe kraju
+
+Dla czynników generowane są automatycznie zmienne zastępcze, np.
+
+```{r}
+sales_all_ia_fit <- lm(Life.expectancy ~ . - Country, data = countries_processed)
+summary(sales_all_ia_fit)
+```
+
+Funkcja `contrasts()` pokazuje kodowanie używane przez `R` dla zmiennych zastępczych.
+
+```{r}
+sales_all_ia_fit$contrasts
+```
+
+# 2. Klasyfikacja
+
+```{r}
+library(ISLR)
+library(class)
+library(dplyr)
+library(MASS)
+```
+
+## Dane
+
+Używamy zbioru danych Life Expectancy (WHO) dostępnego na Kaggle
+
+<https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who>
+
+Wczytujemy dataset z pobranego pliku CSV.
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+```
+
+Dataset zawiera brakujące wartości. W tym projekcie skupiamy sie na prostej klasyfikacji dlatego wykorzystamy prostą metodę usupełniania brakujących wartości średnią z danej kolumny.
+
+Przewidywac będziemy wartości z kolumny `Status` więc od razu wprowadzamy odpowiednie kodowanie.
+
+```{r}
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+Obliczenie korelacji zmiennych numerycznych
+
+```{r}
+cor(countries_processed[, numeric_cols <- sapply(countries_processed, is.numeric)])
+```
+
+```{r}
+plot(Life.expectancy, Income.composition.of.resources)
+```
+
+```{r echo=FALSE}
+plot(Life.expectancy, Adult.Mortality)
+```
+
+## Regresja logistyczna
+
+Chcemy dopasować model regresji logistycznej żeby przewidzieć wartość `Status` na podstawie zmiennych `GDP` + `BMI` + `Schooling` + `under.five.deaths`
+
+```{r}
+dir_logistic <- list()
+dir_logistic$fit <- glm(target ~ GDP + BMI + Schooling + under.five.deaths, 
+                   family = binomial, data = countries_processed)
+summary(dir_logistic$fit)
+```
+
+Przykład wykorzystania funkcji predict
+
+```{r}
+dir_logistic$probs <- predict(dir_logistic$fit, type = "response")
+head(dir_logistic$probs)
+```
+
+Ostatecznie przewidywane przypisanie do klas uzyskujemy stosując bayesowską regułę decyzyjną (*maximum a posteriori*).
+
+```{r}
+dir_logistic$predicted <- ifelse(dir_logistic$probs > 0.5, 1, 0)
+```
+
+Macierz pomyłek
+
+```{r}
+dir_logistic$cm <- table(dir_logistic$predicted, target)
+dir_logistic$cm
+```
+
+Liczymy proporcję błędów
+
+```{r}
+mean(dir_logistic$predicted != countries_processed$target)
+```
+
+Niestety powyższa proporcja błędów jest *treningową proporcją błędów*. Do estymacji *testowej proporcji błędów* zastosujemy podział dostępnych danych na:
+
+-   zbiór uczący --- dane od 2000 do 2012 roku;
+
+-   zbiór testowy --- dane z 2012 - 2015 roku.
+
+```{r}
+train <- countries_processed$Year < 2012
+countries_processed_test <- countries_processed[!train,]
+target_test <- countries_processed$target[!train]
+```
+
+Regresję wykonujemy na podstawie zbioru uczącego
+
+```{r}
+dir_log_t <- list()
+dir_log_t$fit <- glm(target ~  GDP + BMI + Schooling + under.five.deaths, 
+                   family = binomial, data = countries_processed, subset = train)
+summary(dir_log_t$fit)
+```
+
+a otrzymany model wykorzystujemy do predykcji dla danych ze zbioru testowego
+
+```{r}
+dir_log_t$probs <- predict(dir_log_t$fit, countries_processed_test, type = "response")
+dir_log_t$predicted <- ifelse(dir_log_t$probs > 0.5, 1, 0)
+table(dir_log_t$predicted, target_test)
+```
+
+Wyniki w przypadku tego datasetu i podzbioru kolumn są zadowalające ale nie idealne
+
+[**Jaka jest zatem proporcja błędów dla takiego zbioru testowego?**]
+
+Próbujemy uzyskać bardziej efektywny model eliminując najmniej istotne predyktory. Zostawiamy `GDP` i `Schooling`
+
+```{r}
+dir_log_best2 <- list()
+dir_log_best2$fit <- glm(target ~ GDP + Schooling, family = binomial, 
+                    data = countries_processed, subset = train)
+summary(dir_log_best2$fit)
+dir_log_best2$probs <- predict(dir_log_best2$fit, countries_processed_test, type = "response")
+dir_log_best2$predicted <- ifelse(dir_log_best2$probs > 0.5, 1, 0)
+table(dir_log_best2$predicted, target_test)
+```
+
+```{r}
+mean(target_test != 0)
+```
+
+W przypadku tego datasetu usunięcie najmniej istotnych czynników pogorszyło wynik.
+
+## LDA i QDA
+
+Funkcje `lda()` i `qda()` są zaimplementowane w pakiecie `MASS`.
+
+### LDA
+
+W sytuacji jak poprzednio stosujemy LDA do klasyfikacji wyznaczonej przez `target` względem `GDP` i `Schooling`.
+
+```{r}
+dir_lda <- list()
+dir_lda$fit <- lda(target ~ BMI + Schooling, data = countries_processed, subset = train)
+dir_lda$fit
+```
+
+Predykcję wykonuje funkcja `predict.lda()`. Zwraca ona listę, której komponentami są: wektor przewidywanych klas `class`, wektor prawdopodobieństw a posteriori `posterior` i wektor wartości liniowego dyskryminatora `x`.
+
+```{r}
+dir_lda$predicted <- predict(dir_lda$fit, countries_processed_test)
+table(dir_lda$predicted$class, target_test)
+```
+
+Uzyskaliśmy znacznie większą liczbę fałszywych negatwynych wyników i ogółem słabszy wynik
+
+### QDA
+
+Ten sam problem z kwadratowym dyskryminatorem
+
+```{r}
+dir_qda <- list()
+dir_qda$fit <- qda(target ~ BMI + Schooling, data = countries_processed, subset = train)
+dir_qda$fit
+```
+
+I predykcja
+
+```{r}
+dir_qda$predicted <- predict(dir_qda$fit, countries_processed_test)
+table(dir_qda$predicted$class, target_test)
+```
+
+Uzyskalny wynik jest porównywalny z tym uzyskanym w regresji logistycznej
+
+## kNN
+
+W tym przypadku nie ma jawnego etapu dopasowania. Funkcja `knn()` z pakietu `class` od razu wykonuje predykcję. Np. ze zbiorem uczącym i testowym jak poprzednio i z $k = 1$ mamy
+
+```{r}
+train_set <- countries_processed[train, c("GDP", "Schooling")]
+test_set <- countries_processed[!train, c("GDP", "Schooling")]
+target_train <- countries_processed$target[train]
+dir_knn_1 <- knn(train_set, test_set, target_train, k = 3)
+table(dir_knn_1, target_test)
+```
+
+```{r}
+mean(dir_knn_1 != target_test)
+```
+
+Otrzymane wyniki są słabsze niż te otrzymane dla wcześniejszych metod
+
+# 3.1 Resampling
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(MASS)
+library(ISLR)
+library(dplyr)
+library(boot)
+```
+
+## Walidacja krzyżowa
+
+Używamy zbioru danych Life Expectancy (WHO) dostępnego na Kaggle
+
+<https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who>
+
+Wczytujemy dataset z pobranego pliku CSV.
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+### Metoda zbioru walidacyjnego
+
+Tworzymy zbiór uczący z połowy dostępnych obserwacji --- reszta będzie stanowić zbiór walidacyjny. Dla zapewnienia powtarzalności obliczeń stosujemy funkcję `set.seed`.
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+set.seed(1)
+n <- nrow(countries_processed)
+train <- sample(n, n / 2)
+```
+
+Dopasowujemy model liniowy na zbiorze uczącym, następnie obliczamy MSE dla zbioru walidacyjnego.
+
+```{r}
+clm <- lm(Life.expectancy ~ BMI, data = countries_processed, subset = train)
+validation_set <- countries_processed[-train,]
+mse <- mean((validation_set$Life.expectancy - predict(clm, validation_set))^2)
+mse
+```
+
+Powtarzamy to samo dla regresji wielomianowej wyższych stopni
+
+```{r}
+for (i in 2:10) {
+  clm_poly <- lm(Life.expectancy ~ poly(BMI, degree = i), data = countries_processed, 
+                     subset = train)
+  print(mean((validation_set$Life.expectancy - predict(clm_poly, validation_set))^2))
+}
+```
+
+Ponieważ w zbiorze danych mamy informacje z roku na rok dla tego samego państwa coraz wyższe wielomiany dającoraz lepsze rezultaty tak jakby to był zbiór treningowy.
+
+Bardziej odpowiedni byłby podział na kraje jako zbiór walidacyjny ale wtedy odchodzimy od schematu labolatorium
+
+Powtarzamy obliczenia dla innego zbioru walidacyjnego.
+
+```{r}
+set.seed(2)
+train <- sample(n, n / 2)
+validation_set <- countries_processed[-train,]
+degree_max <- 5
+mse <- rep(0, times = degree_max)
+for (i in 1:degree_max) {
+  clm <- lm(Life.expectancy ~ poly(BMI, degree = i), data = countries_processed, subset = train)
+  mse[i] <- mean((validation_set$Life.expectancy - predict(clm, validation_set))^2)
+}
+mse
+```
+
+Otrzymane wyniki można zobrazować na wykresie
+
+```{r}
+plot(mse, xlab = "Stopień wielomianu", ylab = "MSE", type = "b", pch = 20, 
+     col = "blue")
+```
+
+Po trzecim stopniu wielomiany zyski sa niezauważalne
+
+### Walidacja krzyżowa *bez jednego* (*leave-one-out*)
+
+```{r}
+compute_loocv_mse <- function(degree) {
+  countries_processed_glm <- glm(Life.expectancy ~ poly(BMI, degree), data = countries_processed)
+  cv.glm(countries_processed, countries_processed_glm)$delta[1]
+}
+mse <- sapply(1:degree_max, compute_loocv_mse)
+mse
+```
+
+```{r}
+plot(mse, xlab = "Stopień wielomianu", ylab = "LOOCV MSE", type = "b", pch = 20, 
+     col = "blue")
+```
+
+MSE jest średnio wyższy ale jego rozkład zmienia sie w analogiczy sposób w zależności od stopnia wielomianu
+
+### $k$-krotna walidacja krzyżowa
+
+Podobnie korzystamy z funkcji `cv.glm()`, tylko teraz jawnie ustawiamy parametr `K` oznaczający liczbę grup (*folds*). Np. dla $k = 10$ wygląda to jak poniżej.
+
+```{r}
+compute_kcv_mse <- function(degree, k) {
+  countries_processed_glm <- glm(Life.expectancy ~ poly(BMI, degree), data = countries_processed)
+  cv.glm(countries_processed, countries_processed_glm, K = k)$delta[1]
+}
+mse <- sapply(1:degree_max, compute_kcv_mse, k = 10)
+mse
+```
+
+Oczywiście tym razem wyniki są losowe. Możemy zrobić ich zestawienie dla np. 10 prób.
+
+```{r}
+mse10 <- replicate(10, sapply(1:degree_max, compute_kcv_mse, k = 10))
+mse10
+```
+
+I stosowny obrazek
+
+```{r}
+matplot(mse10, pch = 20, type = "l", xlim = c(1, degree_max),
+        xlab = "Stopień wielomianu", ylab = "Walidacyjny MSE")
+```
+
+W tym przypadku nie ma znaczących różnic pomiędzy splitami
+
+## Bootstrap
+
+```{r}
+lm_coefs <- function(data, index = 1:nrow(data)) {
+  coef(lm(Life.expectancy ~ BMI, data = countries_processed, subset = index))
+}
+```
+
+Funkcja `lm_coefs()` oblicza estymaty współczynników regresji dla zbioru danych typu bootstrap utworzonego z `countries_processed`:
+
+```{r}
+n <- nrow(countries_processed)
+lm_coefs(countries_processed, sample(n, n, replace = TRUE))
+```
+
+Jednym z takich zbiorów jest sam oryginał
+
+```{r}
+lm_coefs(countries_processed)
+```
+
+Obliczamy błędy standardowe metodą bootstrap z 1000 replikacji
+
+```{r}
+boot(countries_processed, lm_coefs, R = 1000)
+```
+
+# 3.2 Selekcja
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(MASS)
+library(ISLR)
+library(leaps)
+library(dplyr)
+```
+
+## Selekcja cech dla modeli liniowych
+
+Ładujemy dane analogicznie jak w poprzednich tematach
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+### Wybór najepszego podzbioru
+
+```{r}
+countries_processed_bs <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed)
+countries_processed_bs_sum <- summary(countries_processed_bs)
+countries_processed_bs_sum
+```
+
+Obiekt zwracany przez funkcję `summary.regsubsets()` zawiera informacje umożliwiające zidentyfikowanie globalnie najlepszego pozdbioru cech, np. miarę $C_p$.
+
+```{r}
+countries_processed_bs_sum$cp
+```
+
+Najlepszy podzbiór według kryterium BIC
+
+```{r}
+bic_min <- which.min(countries_processed_bs_sum$bic)
+bic_min
+countries_processed_bs_sum$bic
+```
+
+Stosowny obrazek
+
+```{r}
+plot(countries_processed_bs_sum$bic, xlab = "Liczba zmiennych", ylab = "BIC", col = "green",
+     type = "b", pch = 20)
+points(bic_min, countries_processed_bs_sum$bic[bic_min], col = "red", pch = 9)
+```
+
+Dostępny jest też specjalny rodzaj wykresu (`?plot.regsubsets`).
+
+```{r}
+plot(countries_processed_bs, scale = "bic")
+```
+
+Liczba kolumn została ograniczone ze względu na złożoność obliczeniową.
+
+Dla wybranego podzbioru sugerowane jest użycie wszystkich kolumn.
+
+### Selekcja krokowa do przodu i wstecz
+
+Funkcja `regsubsets()` z odpowiednio ustawionym parametrem `method` może przeprowadzić selekcję krokową.
+
+```{r}
+countries_processed_fwd <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed, nvmax = 19, 
+                          method = "forward")
+countries_processed_fwd_sum <- summary(countries_processed_fwd)
+countries_processed_fwd_sum
+countries_processed_back <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed, nvmax = 19, 
+                           method = "backward")
+countries_processed_back_sum <- summary(countries_processed_back)
+countries_processed_back_sum
+```
+
+```{r}
+bic_min <- which.min(countries_processed_fwd_sum$bic)
+bic_min
+```
+
+Zasugerowany podzbiór kolumn to ten o id 14
+
+### Wybór modelu przy pomocy metody zbioru walidacyjnego
+
+Estymaty błędów testowych będą dokładne tylko jeśli wszystkie aspekty dopasowania modelu --- w tym selekcję zmiennych --- przeprowadzimy z użyciem wyłącznie **zbioru uczącego**.
+
+```{r}
+n <- nrow(countries_processed)
+train <- sample(c(TRUE, FALSE), n, replace = TRUE)
+test <- !train
+countries_processed_bs_v <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed[train,], nvmax = 19)
+```
+
+```{r}
+predict.regsubsets <- function(object, newdata, id, ...) {
+  model_formula <- as.formula(object$call[[2]])
+  mat <- model.matrix(model_formula, newdata)
+  coefs <- coef(object, id = id)
+  mat[, names(coefs)] %*% coefs
+}
+```
+
+Liczymy estymaty błędów
+
+```{r}
+prediction_error <- function(i, model, subset) {
+  pred <- predict(model, countries_processed[subset,], id = i)
+  mean((countries_processed$Life.expectancy[subset] - pred)^2)
+}
+val_errors <- sapply(1:19, prediction_error, model = countries_processed_bs_v, subset = test)
+val_errors
+```
+
+Optymalny model to model 14 i zawiera 14 zmiennych
+
+### Wybór modelu przy pomocy $k$-krotnej walidacji krzyżowej
+
+Musimy dopasować model na każdym z $k$ zbiorów uczących i policzyć błędy testowe na odpowiednich zbiorach testowych.
+
+```{r}
+k <- 10
+folds <- sample(1:k, n, replace = TRUE)
+val_err <- NULL
+for (j in 1:k) {
+  fit_bs <- regsubsets(Life.expectancy ~ . - Country - target, data = countries_processed[folds != j,], nvmax = 19)
+  err <- sapply(1:19, prediction_error, model = fit_bs, subset = (folds == j))
+  val_err <- rbind(val_err, err)
+}
+```
+
+Estymata błędu CV jest teraz średnią błędów w każdej grupie.
+
+```{r}
+cv_errors <- colMeans(val_err)
+cv_errors
+```
+
+Według kryterium optymalna ilość zmienych to 16
+
+# 4. Regularyzacja
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(ISLR)
+library(glmnet)
+library(dplyr)
+```
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+## Regularyzacja
+
+```{r}
+X <- model.matrix(Life.expectancy ~ . - Country - Status - target, data = countries_processed)[, -1]
+y <- countries_processed$Life.expectancy
+```
+
+### Regresja grzbietowa
+
+Wykonujemy regresję grzbietową dla jawnie określonych wartości $\lambda$.
+
+```{r}
+lambda_grid <- 10^seq(10, -2, length.out = 100)
+fit_ridge <- glmnet(X, y, alpha = 0, lambda = lambda_grid)
+```
+
+Dla każdej wartości $\lambda$ otrzymujemy zestaw estymat predyktorów dostępnych w postaci macierzy
+
+```{r}
+dim(coef(fit_ridge))
+```
+
+Można sprawdzić, że większe wartości $\lambda$ dają mniejszą normę euklidesową współczynników (pomijamy wyraz wolny).
+
+```{r}
+fit_ridge$lambda[50]
+coef_ridge <- coef(fit_ridge)[, 50]
+coef_ridge
+sqrt(sum(coef_ridge[-1]^2))
+```
+
+Natomiast mniejsze wartości $\lambda$ dają większą normę euklidesową współczynników
+
+```{r}
+fit_ridge$lambda[70]
+coef(fit_ridge)[, 70]
+sqrt(sum(coef(fit_ridge)[-1, 70]^2))
+```
+
+Przy pomocy funkcji `predict.glmnet()` można uzyskać np. wartości estymat współczynników dla nowej wartości $\lambda$ (np. 50)
+
+```{r}
+predict(fit_ridge, s = 50, type = "coefficients")
+```
+
+Estymujemy testowy MSE
+
+```{r}
+set.seed(1)
+n <- nrow(X)
+train <- sample(n, n / 2)
+test <- -train
+fit_ridge <- glmnet(X[train,], y[train], alpha = 0, lambda = lambda_grid,
+                    thresh = 1e-12)
+```
+
+Dla $\lambda = 4$
+
+```{r}
+pred_ridge <- predict(fit_ridge, s = 4, newx = X[test,])
+mean((pred_ridge - y[test])^2)
+```
+
+Testowy MSE dla modelu zerowego (sam wyraz wolny)
+
+```{r}
+pred_null <- mean(y[train])
+mean((pred_null - y[test])^2)
+```
+
+Testowy MSE dla bardzo dużej wartości $\lambda = 10^{10}$
+
+```{r}
+pred_ridge_big <- predict(fit_ridge, s = 1e10, newx = X[test,])
+mean((pred_ridge_big - y[test])^2)
+```
+
+Dla lambda = 4 dostajemy dobre wyniki znacznie lepsze niż bez regularyzacji. Dla samego wyrazu wolnego i lambda = 10 dostajemy bardzo słabe wyniki
+
+Testowy MSE dla $\lambda = 0$ (metoda najmniejszych kwadratów)
+
+```{r}
+pred_ridge_0 <- predict(fit_ridge, x = X[train,], y = y[train], s = 0, 
+                      newx = X[test,], exact = TRUE)
+mean((pred_ridge_0 - y[test])^2)
+```
+
+Porównanie estymat współczynników
+
+```{r}
+lm(y ~ X, subset = train)
+predict(fit_ridge, x = X[train,], y = y[train], s = 0, exact = TRUE, 
+        type = "coefficients")[1:20,]
+```
+
+Wyliczenie optymalnej wartości $\lambda$ przy pomocy walidacji krzyżowej
+
+```{r}
+set.seed(1)
+cv_out <- cv.glmnet(X[train,], y[train], alpha = 0)
+plot(cv_out)
+cv_out$lambda.min
+```
+
+MSE dla optymalnego $\lambda$
+
+```{r}
+pred_ridge_opt <- predict(fit_ridge, s = cv_out$lambda.min, newx = X[test,])
+mean((pred_ridge_opt - y[test])^2)
+```
+
+Estymaty współczynników dla optymalnego $\lambda$
+
+```{r}
+fit_ridge_full <- glmnet(X, y, alpha = 0)
+predict(fit_ridge_full, s = cv_out$lambda.min, type = "coefficients")
+```
+
+### Lasso
+
+Dopasowujemy lasso dla ustalonej siatki parametrów regularyzacji
+
+```{r}
+fit_lasso <- glmnet(X[train,], y[train], alpha = 1)
+plot(fit_lasso, xvar = "lambda")
+```
+
+Wykonujemy walidację krzyżową i liczymy estymatę MSE
+
+```{r}
+cv_out <- cv.glmnet(X[train,], y[train], alpha = 1)
+plot(cv_out)
+cv_out$lambda.min
+pred_lasso <- predict(fit_lasso, s = cv_out$lambda.min, newx = X[test,])
+mean((pred_lasso - y[test])^2)
+```
+
+Wszystkie metedy pomimo swoich matematycznych różnic dają podobne rezulataty na poziomie MSE \~= 17. Moze to wynikać z faktu że w danych występuje dużo szumu którego nie da sie w prosty sposob wyeliminować
+
+Estymaty współczynników dla optymalnego $\lambda$
+
+```{r lasso.coefs.min}
+fit_lasso_full <- glmnet(X, y, alpha = 1)
+predict(fit_lasso_full, s = cv_out$lambda.min, type = "coefficients")[1:20,]
+```
+
+# 4.2 Modele nieliniowe
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(ISLR)
+library(splines)
+library(gam)
+library(dplyr)
+```
+
+## Modele nieliniowe
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Status == "Developing", 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE])
+head(countries_processed)
+attach(countries_processed)
+```
+
+### Regresja wielomianowa
+
+Regresja wielomianowa stopnia 4 `Life.expectancy` względem `BMI`.
+
+```{r}
+fit_poly <- lm(Life.expectancy ~ poly(BMI, 4), data = countries_processed)
+summary(fit_poly)
+```
+
+To samo z użyciem standardowej bazy wielomianów $X, X^2, X^3, X^4$.
+
+```{r}
+fit_poly_raw <- lm(Life.expectancy ~ poly(BMI, 4, raw = TRUE), data = countries_processed)
+summary(fit_poly_raw)
+```
+
+To samo, co powyżej, inaczej zapisane
+
+```{r}
+fit_poly_raw <- lm(Life.expectancy ~ BMI + I(BMI^2) + I(BMI^3) + I(BMI^4), data = countries_processed)
+summary(fit_poly_raw)
+```
+
+Obrazek dopasowania zawierający krzywe błędu standardowego.
+
+```{r}
+BMI_lims <- range(countries_processed$BMI)
+BMI_grid <- seq(BMI_lims[1], BMI_lims[2])
+pred_poly <- predict(fit_poly, list(BMI = BMI_grid), se.fit = TRUE)
+se_bands <- cbind(pred_poly$fit + 2 * pred_poly$se.fit, 
+                  pred_poly$fit - 2 * pred_poly$se.fit)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, col = "darkgrey", cex = 0.5, xlim = BMI_lims)
+lines(BMI_grid, pred_poly$fit, col = "red", lwd = 2)
+matlines(BMI_grid, se_bands, col = "red", lty = "dashed")
+```
+
+### Regresja logistyczna wielomianowa
+
+```{r}
+hist(countries_processed$Life.expectancy)
+```
+
+Chcemy skonstruować klasyfikator z dwoma klasami: długo żyjących (więcej niż 70 lat: warunek `Life.expectancy > 70`) i krótko żyjących (pozostali). Predyktorem jest `BMI`, ale chcemy też uwzględnić wpływ wyższych potęg (do 4) tej zmiennej.
+
+Wartośc 70 została wybrana na podstawie histogramu tak aby wielkość klas była abliżona
+
+```{r}
+fit_log_poly <- glm(I(Life.expectancy > 70) ~ poly(BMI, 4), data = countries_processed, family = binomial)
+```
+
+Funkcja `predict.glm()` standardowo zwraca szanse logarytmiczne, musimy jednak otrzymane wartości przekształcić funkcją logistyczną.
+
+```{r}
+pred_log_poly <- predict(fit_log_poly, list(BMI = BMI_grid), se.fit = TRUE)
+pred_probs <- plogis(pred_log_poly$fit)
+se_bands_logit <- cbind(pred_log_poly$fit + 2 * pred_log_poly$se.fit,
+                        pred_log_poly$fit - 2 * pred_log_poly$se.fit)
+se_bands <- plogis(se_bands_logit)
+plot(countries_processed$BMI, I(countries_processed$Life.expectancy > 70), xlim = BMI_lims, ylim = c(0, 1), 
+     col = "darkgrey", cex = 0.5, ylab = "P(Life.expectancy > 70 | BMI)")
+lines(BMI_grid, pred_probs, col = "red", lwd = 2)
+matlines(BMI_grid, se_bands, lty = "dashed", col = "red")
+```
+
+### Funkcje sklejane
+
+Bazę regresyjnych funkcji sklejanych wylicza funkcja `bs()` z pakietu `splines`. Domyślnym stopniem funkcji sklejanych jest 3.
+
+Regresja z użyciem funkcji sklejanych z ustalonymi węzłami.
+
+```{r}
+fit_bs_knots <- lm(Life.expectancy ~ bs(BMI, knots = c(25, 40, 60)), data = countries_processed)
+pred_bs_knots <- predict(fit_bs_knots, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_knots$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_knots$fit + 2 * pred_bs_knots$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_knots$fit - 2 * pred_bs_knots$se.fit, col = "red",
+      lty = "dashed")
+abline(v = c(25, 40, 60), lty = "dotted")
+```
+
+Dopasowanie modelu wykorzystującego funkcje sklejane o ustalonej liczbie stopni swobody. Węzły są rozmieszczane automatycznie.
+
+```{r}
+fit_bs_df <- lm(Life.expectancy ~ bs(BMI, df = 6), data = countries_processed)
+pred_bs_df <- predict(fit_bs_df, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_df$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_df$fit + 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_df$fit - 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+bs_knots <- attr(bs(countries_processed$BMI, df = 6), "knots")
+abline(v = bs_knots, lty = "dotted")
+```
+
+[**Funkcja `bs()` akceptuje parametr `degree`, który ustala stopień funkcji sklejanej. Sprawdź jak w powyższych przykładach wyglądają funkcje sklejane innych stopni.**]
+
+Stopień -\> 10
+
+```{r}
+fit_bs_df <- lm(Life.expectancy ~ bs(BMI, df = 10), data = countries_processed)
+pred_bs_df <- predict(fit_bs_df, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_df$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_df$fit + 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_df$fit - 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+bs_knots <- attr(bs(countries_processed$BMI, df = 10), "knots")
+abline(v = bs_knots, lty = "dotted")
+```
+
+Stopień -\> 3
+
+```{r}
+fit_bs_df <- lm(Life.expectancy ~ bs(BMI, df = 3), data = countries_processed)
+pred_bs_df <- predict(fit_bs_df, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_bs_df$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_bs_df$fit + 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_bs_df$fit - 2 * pred_bs_df$se.fit, col = "red",
+      lty = "dashed")
+bs_knots <- attr(bs(countries_processed$BMI, df = 3), "knots")
+abline(v = bs_knots, lty = "dotted")
+```
+
+### Naturalne funkcje sklejane
+
+Bazę naturalnych *sześciennych* funkcji sklejanych wyznacza funkcja `ns()` z pakietu `splines`.
+
+```{r}
+fit_ns <- lm(Life.expectancy ~ ns(BMI, df = 4), data = countries_processed)
+pred_ns <- predict(fit_ns, list(BMI = BMI_grid), se.fit = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(BMI_grid, pred_ns$fit, col = "red", lwd = 2)
+lines(BMI_grid, pred_ns$fit + 2 * pred_ns$se.fit, col = "red",
+      lty = "dashed")
+lines(BMI_grid, pred_ns$fit - 2 * pred_ns$se.fit, col = "red",
+      lty = "dashed")
+abline(v = attr(ns(countries_processed$BMI, df = 4), "knots"), lty = "dotted")
+```
+
+### Wygładzające funkcje sklejane
+
+Dopasowanie wygładzającej (sześciennej) funkcji sklejanej do danych wykonuje funkcja `smooth.spline()`. Możemy dopasować wygładzającą funkcję sklejaną o ustalonej liczbie stopni swobody (tu 16).
+
+```{r}
+fit_smooth_df <- smooth.spline(countries_processed$BMI, countries_processed$Life.expectancy, df = 16)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(fit_smooth_df, col = "red", lwd = 2)
+```
+
+Można też liczbę stopni swobody wyznaczyć automatycznie korzystając z walidacji krzyżowej.
+
+```{r}
+fit_smooth_cv <- smooth.spline(countries_processed$BMI, countries_processed$Life.expectancy, cv = TRUE)
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+lines(fit_smooth_cv, col = "red", lwd = 2)
+```
+
+### Regresja lokalna
+
+Regresję lokalną (domyślnie wielomianami stopnia 2) wykonuje funkcja `loess()`. Parametr funkcji o nazwie `span` odpowiada parametrowi metody $s$.
+
+```{r}
+spans <- c(0.2, 0.5)
+clrs <- c("red", "blue")
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+for (i in 1:length(spans)) {
+   fit_loess <- loess(Life.expectancy ~ BMI, span = spans[i], data = countries_processed)
+   pred_loess <- predict(fit_loess, data.frame(BMI = BMI_grid))
+   lines(BMI_grid, pred_loess, col = clrs[i], lwd = 2)
+}
+legend("topright", legend = paste("s =", spans), col = clrs, lty = 1, lwd = 2)
+```
+
+To samo dla wielomianów stopnia 1.
+
+```{r}
+spans <- c(0.2, 0.5)
+clrs <- c("red", "blue")
+plot(countries_processed$BMI, countries_processed$Life.expectancy, cex = 0.5, col = "darkgrey")
+for (i in 1:length(spans)) {
+   fit_loess <- loess(Life.expectancy ~ BMI, span = spans[i], degree = 1, data = countries_processed)
+   pred_loess <- predict(fit_loess, data.frame(BMI = BMI_grid))
+   lines(BMI_grid, pred_loess, col = clrs[i], lwd = 2)
+}
+legend("topright", legend = paste("s =", spans), col = clrs, lty = 1, lwd = 2)
+```
+
+### Uogólnione modele addytywne (GAMs)
+
+GAM będący rozwinięciem modelu liniowego może być uczony metodą najmniejszych kwadratów przy pomocy funkcji `lm()`.
+
+```{r}
+fit_gam_ls <- lm(Life.expectancy ~ ns(GDP, df = 4) + ns(BMI, df = 5) + Population,
+                 data = countries_processed)
+fit_gam_ls
+summary(fit_gam_ls)
+```
+
+Ogólniejsze GAM są uczone przy pomocy algorytmu dopasowania wstecznego w funkcji `gam()` z pakietu `gam`. Pakiet `gam` zawiera też funkcje implementujące modele nieparametryczne: `s()` reprezentującą wygładzające funkcje sklejane i `lo()` reprezentującą lokalną regresję.
+
+Dopasowanie modelu podobnego do poprzedniego, ale z użyciem wygładzających funkcji sklejanych.
+
+```{r}
+fit_gam_bf <- gam(Life.expectancy ~ s(GDP, df = 4) + s(BMI, df = 5) + Population, data = countries_processed)
+summary(fit_gam_bf)
+```
+
+Wykres dla modelu dopasowanego funkcją `gam()`.
+
+```{r}
+par(mfrow = c(1, 3))
+plot(fit_gam_bf, col = "red", se = TRUE)
+```
+
+Funkcja `plot.Gam()` działa też dla modeli metody najmniejszych kwadratów, ale wówczas trzeba się do niej odwołać jawnie.
+
+```{r}
+par(mfrow = c(1, 3))
+plot.Gam(fit_gam_ls, col = "red", se = TRUE)
+```
+
+Istnieje wersja funkcji `anova()` porównująca GAMs.
+
+```{r}
+fit_gam_1 <- gam(Life.expectancy ~ s(BMI, df = 5) + Population, data = countries_processed)
+fit_gam_2 <- gam(Life.expectancy ~ GDP + s(BMI, df = 5) + Population, data = countries_processed)
+anova(fit_gam_1, fit_gam_2, fit_gam_bf, test = "F")
+```
+
+Dopasowanie modelu wykorzystującego lokalną regresję.
+
+```{r}
+fit_gam_lo <- gam(Life.expectancy ~ s(GDP, df = 4) + lo(BMI, span = 0.7) + Population, 
+                  data = countries_processed)
+summary(fit_gam_lo)
+par(mfrow = c(1, 3))
+plot(fit_gam_lo, col = "green", se = TRUE)
+```
+
+### GAM w GLM
+
+Regresja logistyczna wykorzystująca GAM
+
+```{r logisticgam}
+fit_logistic_gam <- gam(I(Life.expectancy > 250) ~ GDP + s(BMI, df = 5) + Population, 
+                        family = binomial, data = countries_processed)
+summary(fit_logistic_gam)
+par(mfrow = c(1, 3))
+plot(fit_logistic_gam, col = "blue", se = TRUE)
+```
+
+# 5. Drzewa
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(ISLR)
+library(MASS)
+library(tree)
+library(randomForest)
+library(gbm)
+library(dplyr)
+```
+
+```{r}
+countries <- read.csv("LifeExpectancyData.csv", header = TRUE, na.strings = "?")
+
+numeric_cols <- sapply(countries, is.numeric)
+
+replace_na_with_mean <- function(x) {
+  if(is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+  }
+  return(x)
+}
+countries = countries %>% mutate(target = ifelse(Life.expectancy < 70, 0, 1))
+countries_imputed <- as.data.frame(lapply(countries[, numeric_cols], replace_na_with_mean))
+countries_processed <- na.omit(cbind(countries_imputed, countries[, !numeric_cols, drop = FALSE]))
+head(countries_processed)
+attach(countries_processed)
+```
+
+## Drzewa decyzyjne
+
+Drzewa decyzyjne są zaimplementowane w pakiecie `tree` (nieco odmienna implementacja dostępna jest w pakiecie `rpart`).
+
+### Drzewa klasyfikacyjne
+
+Będziemy przewidywać
+
+Budujemy drzewo klasyfikacyjne do predykcji `target` na podstawie pozostałych zmiennych (poza `countries`).
+
+```{r}
+countries_high_tree <- tree(target ~ . - Country - Status - Life.expectancy, data = countries_processed)
+summary(countries_high_tree)
+```
+
+Dla drzew klasyfikacyjnych $$
+  \text{deviance} = -2 n \sum_{m=1}^{|T|} \sum_{k=1}^K \hat{p}_{mk} \log \hat{p}_{mk}
+$$ oraz $$
+  \text{residual mean deviance} = \frac{\text{deviance}}{n - |T|}.
+$$
+
+Przedstawienie graficzne dopasowanego modelu
+
+```{r}
+plot(countries_high_tree)
+text(countries_high_tree, pretty = 0)
+```
+
+Więcej informacji podaje funkcja `print.tree()`
+
+```{r}
+countries_high_tree
+```
+
+Widzimy że najbardziej istotne są `Income.composition.of.resources` i `Adult.mortality`
+
+Metodą zbioru walidacyjnego estymujemy błąd testowy dla drzewa klasyfikacyjnego w rozważanym problemie.
+
+```{r}
+set.seed(1)
+n <- nrow(countries_processed)
+train <- sample(n, n / 2)
+test <- -train
+countries_high_tree <- tree(as.factor(target) ~ . - Country - Status - Life.expectancy, data = countries_processed, subset = train)
+tree_class <- predict(countries_high_tree, newdata = countries_processed[test,], type = "class")
+table(tree_class, countries_processed$target[test])
+mean(na.omit(tree_class != countries_processed$target[test]))
+```
+
+*Duże* drzewo $T_0$ dla zbioru uczącego `countries_processed[train,]`
+
+```{r}
+plot(countries_high_tree)
+text(countries_high_tree, pretty = 0)
+```
+
+Do znalezienia optymalnego poddrzewa stosujemy przycinanie stosowane złożonością. Przy pomocy CV konstruujemy ciąg poddrzew wyznaczony przez malejącą złożoność.
+
+```{r}
+set.seed(1)
+countries_high_cv <- cv.tree(countries_high_tree, FUN = prune.misclass)
+countries_high_cv
+plot(countries_high_cv$size, countries_high_cv$dev, type = "b")
+```
+
+Składowa `countries_high_cv$dev` zawiera liczbę błędów CV. Przycinamy drzewo $T_0$ do poddrzewa z najmniejszym poziomem błędów CV.
+
+```{r}
+size_opt <- countries_high_cv$size[which.min(countries_high_cv$dev)]
+countries_high_pruned <- prune.misclass(countries_high_tree, best = size_opt)
+plot(countries_high_pruned)
+text(countries_high_pruned, pretty = 0)
+```
+
+Testowy poziom błędów dla optymalnego poddrzewa.
+
+```{r}
+pruned_class <- predict(countries_high_pruned, newdata = countries_processed[test,], 
+                        type = "class")
+table(pruned_class, countries_processed$target[test])
+mean(na.omit(pruned_class != countries_processed$target[test]))
+```
+
+```         
+tree_sizes <- countries_high_cv$size
+test_mse_values <- numeric(length(tree_sizes))
+
+# Calculate test MSE for each tree size
+for (i in seq_along(tree_sizes)) {
+  pruned_tree <- prune.misclass(countries_high_tree, best = tree_sizes[i])
+  testPred <- predict(pruned_tree, countries_processed[test,], type = "class")
+  test_mse_values[i] <- mean(testPred != countries_processed$target[test])
+}
+
+plot(tree_sizes, test_mse_values, type = "b", col = "blue", pch = 19,
+     xlab = "Tree Size (number of terminal nodes)", ylab = "Test MSE",
+     main = "Test MSE vs Tree Size")
+```
+
+### Drzewa regresyjne
+
+Używamy zbioru danych `countries_processed` z pakietu `MASS`. Konstruujemy drzewo decyzyjne dla problemu regresji `Life.expectancy` względem pozostałych zmiennych.
+
+```{r}
+countries_tree <- tree(Life.expectancy ~ . - Country, data = countries_processed)
+summary(countries_tree)
+```
+
+*Deviance* oznacza tutaj RSS. Przedstawienie drzewa
+
+```{r}
+countries_tree
+plot(countries_tree)
+text(countries_tree)
+```
+
+Najistotniejsze są target czyli status (developing/developed), potem Income.composition.of.resources i HIV.AIDS
+
+Metodą zbioru walidacyjnego szacujemy błąd testowy.
+
+```{r}
+set.seed(1)
+n <- nrow(countries_processed)
+train <- sample(n, n / 2)
+test <- -train
+countries_tree <- tree(Life.expectancy ~ . - Country, data = countries_processed, subset = train)
+countries_pred <- predict(countries_tree, newdata = countries_processed[test,])
+mean((countries_pred - countries_processed$Life.expectancy[test])^2)
+```
+
+Wyznaczamy optymalne poddrzewo metodą przycinania sterowanego złożonością.
+
+```{r}
+countries_cv <- cv.tree(countries_tree)
+plot(countries_cv$size, countries_cv$dev, type = "b")
+```
+
+W tym przypadku im większy model tym precyzyjniej oddaje zależności. Jednak dokładność nie spada znacząco powyżej głębokości równej 4
+
+```{r}
+countries_pruned <- prune.tree(countries_tree, best = 4)
+plot(countries_pruned)
+text(countries_pruned)
+```
+
+## Bagging i lasy losowe
+
+### Bagging
+
+Bagging dla regresji `Life.expectancy` względem wszystkich pozostałych w zbiorze `countries_processed`.
+
+```{r}
+countries_bag <- randomForest(Life.expectancy ~ . - Country, data = countries_processed, mtry = 13, importance = TRUE)
+countries_bag
+```
+
+Wykres błędu OOB względem liczby drzew
+
+```{r}
+plot(countries_bag, type = "l")
+```
+
+Wyznaczenie ważności predyktorów
+
+```{r}
+importance(countries_bag)
+```
+
+I stosowny obrazek
+
+```{r}
+varImpPlot(countries_bag)
+```
+
+Oszacowanie błędu testowego dla poprzednio wyznaczonego zbioru walidacyjnego.
+
+```{r}
+set.seed(2)
+countries_bag <- randomForest(Life.expectancy ~ ., data = countries_processed, subset = train, mtry = 13,
+                         importance = TRUE)
+countries_pred_bag <- predict(countries_bag, newdata = countries_processed[test,])
+mean((countries_pred_bag - countries_processed$Life.expectancy[test])^2)
+```
+
+`target` pozostał jako najbardziej znacząca zmienna ucząca. Zmienna `Year` pojawiła sie na drugim miejscu
+
+Powyższe dla mniejszej liczby hodowanych drzew
+
+```{r}
+set.seed(2)
+countries_bag_s <- randomForest(Life.expectancy ~ ., data = countries_processed, subset = train, mtry = 13,
+                         importance = TRUE, ntree = 25)
+countries_pred_bag_s <- predict(countries_bag_s, newdata = countries_processed[test,])
+mean((countries_pred_bag_s - countries_processed$Life.expectancy[test])^2)
+```
+
+### Lasy losowe
+
+Domyślna wartość parametru `mtry` to $\sqrt{p}$ dla regresji i $p/3$ dla klasyfikacji.
+
+Oszacowanie błędu testowego dla poprzednio wyznaczonego zbioru walidacyjnego.
+
+```{r}
+set.seed(2)
+countries_rf <- randomForest(Life.expectancy ~ . - Country, data = countries_processed, subset = train,
+                         importance = TRUE)
+countries_pred_rf <- predict(countries_rf, newdata = countries_processed[test,])
+mean((countries_pred_rf - countries_processed$Life.expectancy[test])^2)
+```
+
+```{r}
+importance(countries_rf)
+```
+
+Istotność zmiennych pozostała podobna
+
+Powyższe dla ręcznie ustawionego parametru $m$ (czyli `mtry`).
+
+```{r}
+set.seed(2)
+countries_rf <- randomForest(Life.expectancy ~ ., data = countries_processed, subset = train, mtry = 6,
+                         importance = TRUE)
+countries_pred_rf <- predict(countries_rf, newdata = countries_processed[test,])
+mean((countries_pred_rf - countries_processed$Life.expectancy[test])^2)
+```
+
+## Boosting
+
+Używamy algorytmów boostingu dla drzew decyzyjnych zaimplementowanych w pakiecie `gbm`. Inną implementację --- wydajną i często pojawiającą się w zastosowaniach --- zawiera pakiet `xgboost`.
+
+Boosting dla regresji `Life.expectancy` względem pozostałych zmiennych ze zbioru `countries_processed`. Funkcją dopasowującą model jest `gbm()` z istotnymi parametrami:
+
+-   `distribution`: `"gaussian"` dla regresji z RSS, `"bernoulli"` dla regresji typu logistycznego;
+
+-   `n.trees`: liczba hodowanych drzew ($B$);
+
+-   `interaction.depth`: głębokość interakcji ($d$);
+
+-   `shrinkage`: parametr spowalniający uczenie ($\lambda$).
+
+```{r}
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed, distribution = "gaussian",
+                  n.trees = 5000, interaction.depth = 4)
+countries_boost
+```
+
+Funkcja `summary.gbm()` wyznacza ważność predyktorów i (domyślnie) wykonuje odpowiedni wykres.
+
+```{r}
+summary(countries_boost)
+```
+
+[**Które predyktory teraz są najistotniejsze?**]
+
+Podobnie jak w przypadku zwykłych drzew decyzyjnych najistotniejsze były kolumny `target` czyli status oraz `HIV.AIDS`
+
+Oszacowanie błędu testowego dla poprzednio wyznaczonego zbioru walidacyjnego.
+
+```{r}
+set.seed(2)
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed[train,], distribution = "gaussian",
+                  interaction.depth = 4, n.trees = 5000)
+countries_pred_boost <- predict(countries_boost, newdata = countries_processed[test,], n.trees = 5000)
+mean((countries_pred_boost - countries_processed$Life.expectancy[test])^2)
+```
+
+To samo dla $\lambda = 0.01$.
+
+```{r}
+set.seed(2)
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed[train,], distribution = "gaussian",
+                  interaction.depth = 4, n.trees = 5000, shrinkage = 0.01)
+countries_pred_boost <- predict(countries_boost, newdata = countries_processed[test,], n.trees = 5000)
+mean((countries_pred_boost - countries_processed$Life.expectancy[test])^2)
+```
+
+To samo dla $d = 1$.
+
+```{r}
+set.seed(2)
+countries_boost <- gbm(Life.expectancy ~ . - Country - Status, data = countries_processed[train,], distribution = "gaussian",
+                  n.trees = 5000, shrinkage = 0.01)
+countries_pred_boost <- predict(countries_boost, newdata = countries_processed[test,], n.trees = 5000)
+mean((countries_pred_boost - countries_processed$Life.expectancy[test])^2)
+```
+
+```{r}
+
+```
